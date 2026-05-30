@@ -6,14 +6,14 @@ from flask import Flask
 from threading import Thread
 from dotenv import load_dotenv
 
-# Cargar las variables de entorno desde el archivo .env
+# Cargar las variables de entorno desde el archivo .env (para local)
 load_dotenv()
 
-# CONFIGURACIÓN DE INTENTS (Esto es lo que faltaba y causaba el error)
+# CONFIGURACIÓN DE INTENTS
 intents = discord.Intents.default()
-intents.message_content = True  # Permite al bot leer el contenido de los mensajes
+intents.message_content = True  # Permite al bot leer el contenido de los mensajes (!info)
 
-# Inicialización del Bot con los intents corregidos
+# Inicialización del Bot con el prefijo "!" y los intents correctos
 bot = commands.Bot(command_prefix='!', description="Bot de Info Free Fire", intents=intents)
 
 # Configuración del servidor Web (Flask) para Render / Railway
@@ -24,7 +24,7 @@ def home():
     return "¡El bot está vivo y funcionando!"
 
 def run():
-    # Render asigna automáticamente un puerto, si no usa el 10000
+    # Render asigna automáticamente un puerto, si no usa el 10000 por defecto
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
@@ -32,24 +32,25 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
-# EVENTOS DEL BOT DE DISCORD
+# EVENTO: CUANDO EL BOT SE CONECTA
 @bot.event
-def on_ready():
+async def on_ready():
     print(f'=== CONFIGURACIÓN EXITOSA ===')
     print(f'Conectado como: {bot.user.name}')
     print(f'ID del Bot: {bot.user.id}')
     print(f'=============================')
 
-# COMANDO !info [UID]
+# COMANDO: !info [UID]
 @bot.command()
-def info(ctx, uid: str = None):
+async def info(ctx, uid: str = None):
+    # Verificar si el usuario no escribió el UID
     if uid is None:
-        await ctx.send("❌ **Error:** Por favor, proporciona un UID de Free Fire. Ejemplo: `!info 12345678`滑")
+        await ctx.send("❌ **Error:** Por favor, proporciona un UID de Free Fire. Ejemplo: `!info 12345678` 🎮")
         return
 
     await ctx.send(f"🔍 Buscando información para el UID: `{uid}`... Por favor, espera.")
 
-    # API externa que utiliza el repositorio para obtener los datos de Free Fire
+    # API externa para obtener los datos de Free Fire
     url = f"https://freefireapi.com.br/api/search?id={uid}&lang=es"
 
     try:
@@ -58,7 +59,7 @@ def info(ctx, uid: str = None):
         if response.status_code == 200:
             data = response.json()
             
-            # Construcción del mensaje incrustado (Embed) con los datos corregidos
+            # Construcción del recuadro (Embed) con los datos del jugador
             embed = discord.Embed(
                 title=f"📊 Información de Cuenta - Free Fire", 
                 color=discord.Color.orange()
@@ -82,13 +83,13 @@ def info(ctx, uid: str = None):
 
 # ENCENDER EL BOT Y EL SERVIDOR WEB
 if __name__ == "__main__":
-    # Inicia el servidor web en segundo plano
+    # Inicia el servidor web Flask en segundo plano
     keep_alive()
     
-    # Obtiene el Token secreto desde el archivo .env
+    # Obtiene el Token secreto (desde Render o desde el archivo .env)
     token = os.getenv('TOKEN')
     
     if token:
         bot.run(token)
     else:
-        print("❌ ERROR CRÍTICO: No se encontró la variable 'TOKEN' en el archivo .env")
+        print("❌ ERROR CRÍTICO: No se encontró la variable 'TOKEN'. Asegúrate de configurarla en Render.")
