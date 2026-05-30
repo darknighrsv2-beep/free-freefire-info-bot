@@ -1,115 +1,94 @@
-import discord
-from discord.ext import commands, tasks
 import os
-import traceback
+import discord
+from discord.ext import commands
+import requests
 from flask import Flask
-import sys
-import aiohttp
-import asyncio
+from threading import Thread
 from dotenv import load_dotenv
 
-# Initialize environment variables
+# Cargar las variables de entorno desde el archivo .env
 load_dotenv()
 
-# Flask Setup
-app = Flask(__name__)
-bot_name = "Loading..."
+# CONFIGURACIÓN DE INTENTS (Esto es lo que faltaba y causaba el error)
+intents = discord.Intents.default()
+intents.message_content = True  # Permite al bot leer el contenido de los mensajes
+
+# Inicialización del Bot con los intents corregidos
+bot = commands.Bot(command_prefix='!', description="Bot de Info Free Fire", intents=intents)
+
+# Configuración del servidor Web (Flask) para Render / Railway
+app = Flask('')
 
 @app.route('/')
 def home():
-    """Health check endpoint for Render"""
-    return f"Bot {bot_name} is operational"
+    return "¡El bot está vivo y funcionando!"
 
-def run_flask():
-    """Run Flask with Render-compatible settings"""
+def run():
+    # Render asigna automáticamente un puerto, si no usa el 10000
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
-# Discord Bot Setup
-TOKEN = os.getenv("TOKEN")
-if not TOKEN:
-    raise ValueError("Missing TOKEN in environment")
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
 
-class Bot(commands.Bot):
-    def __init__(self):
-        # Configure minimal required intents
-        intents = discord.Intents.default()
-        intents.message_content = True
-        
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            help_command=None
-        )
-        self.session = None
+# EVENTOS DEL BOT DE DISCORD
+@bot.event
+def on_ready():
+    print(f'=== CONFIGURACIÓN EXITOSA ===')
+    print(f'Conectado como: {bot.user.name}')
+    print(f'ID del Bot: {bot.user.id}')
+    print(f'=============================')
 
-    async def setup_hook(self):
-        """Initialize bot components"""
-        self.session = aiohttp.ClientSession()
-        
-        # Load cogs
-        try:
-            await self.load_extension("cogs.infoCommands")
-            print("✅ Successfully loaded InfoCommands cog")
-        except Exception as e:
-            print(f"❌ Failed to load cog: {e}")
-            traceback.print_exc()
-        
-        await self.tree.sync()
-        self.update_status.start()
+# COMANDO !info [UID]
+@bot.command()
+def info(ctx, uid: str = None):
+    if uid is None:
+        await ctx.send("❌ **Error:** Por favor, proporciona un UID de Free Fire. Ejemplo: `!info 12345678`滑")
+        return
 
-    async def on_ready(self):
-        """When bot connects to Discord"""
-        global bot_name
-        bot_name = str(self.user)
-        
-        print(f"\n🔗 Connected as {bot_name}")
-        print(f"🌐 Serving {len(self.guilds)} servers")
-        
-        # Start Flask if running on Render
-        if os.environ.get('RENDER'):
-            import threading
-            flask_thread = threading.Thread(target=run_flask, daemon=True)
-            flask_thread.start()
-            print("🚀 Flask server started in background")
+    await ctx.send(f"🔍 Buscando información para el UID: `{uid}`... Por favor, espera.")
 
-    @tasks.loop(minutes=5)
-    async def update_status(self):
-        """Update bot presence periodically"""
-        try:
-            activity = discord.Activity(
-                type=discord.ActivityType.watching,
-                name=f"{len(self.guilds)} servers"
-            )
-            await self.change_presence(activity=activity)
-        except Exception as e:
-            print(f"⚠️ Status update failed: {e}")
+    # API externa que utiliza el repositorio para obtener los datos de Free Fire
+    url = f"https://freefireapi.com.br/api/search?id={uid}&lang=es"
 
-    @update_status.before_loop
-    async def before_status_update(self):
-        await self.wait_until_ready()
-
-    async def close(self):
-        """Cleanup on shutdown"""
-        if self.session:
-            await self.session.close()
-        await super().close()
-
-async def main():
-    bot = Bot()
     try:
-        await bot.start(TOKEN)
-    except KeyboardInterrupt:
-        await bot.close()
-    except Exception as e:
-        print(f"⚠️ Critical error: {e}")
-        traceback.print_exc()
-        await bot.close()
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Construcción del mensaje incrustado (Embed) con los datos corregidos
+            embed = discord.Embed(
+                title=f"📊 Información de Cuenta - Free Fire", 
+                color=discord.Color.orange()
+            )
+            embed.add_field(name="👤 Nombre en juego", value=data.get('name', 'No encontrado'), inline=True)
+            embed.add_field(name="🆔 UID", value=uid, inline=True)
+            embed.add_field(name="📈 Nivel", value=data.get('level', 'N/A'), inline=True)
+            embed.add_field(name="🏆 Rango BR", value=data.get('rank', 'No encontrado'), inline=True)
+            embed.add_field(name="👥 Clan", value=data.get('clan_name', 'Sin Clan'), inline=True)
+            embed.add_field(name="🌍 Región", value=data.get('region', 'N/A'), inline=True)
+            
+            embed.set_footer(text="BooyahBot • Información en tiempo real")
+            
+            await ctx.send(embed=embed)
+        else:
+            await ctx.send("❌ No se encontró información para ese UID o la API está caída temporalmente.")
+            
+    except requests.exceptions.RequestException as e:
+        print(f"Error de conexión con la API: {e}")
+        await ctx.send("⚠️ Hubo un error al conectar con el servidor de Free Fire. Inténtalo más tarde.")
 
+# ENCENDER EL BOT Y EL SERVIDOR WEB
 if __name__ == "__main__":
-    # Special handling for Render's environment
-    if os.environ.get('RENDER'):
-        asyncio.run(main())
+    # Inicia el servidor web en segundo plano
+    keep_alive()
+    
+    # Obtiene el Token secreto desde el archivo .env
+    token = os.getenv('TOKEN')
+    
+    if token:
+        bot.run(token)
     else:
-        bot = Bot()
-        bot.run(TOKEN)
+        print("❌ ERROR CRÍTICO: No se encontró la variable 'TOKEN' en el archivo .env")
